@@ -3,10 +3,12 @@ services:
     name: ivasms-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 wsgi:app & python index.py
+    startCommand: python index.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: "3.11.0"
+      - key: PORT
+        value: "10000"
       - key: IVASMS_EMAIL
         sync: false
       - key: IVASMS_PASSWORD
@@ -15,4 +17,4 @@ services:
         sync: false
       - key: CHAT_ID
         sync: false
-    healthCheckPath: /health
+    healthCheckPath: /
