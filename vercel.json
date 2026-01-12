@@ -13,7 +13,7 @@
     }
   ],
   "env": {
-    "IVASMS_EMAIL": "@ivasms-email",
+    "IVASMS_EMAIL": "@ivas-email",
     "IVASMS_PASSWORD": "@ivasms-password",
     "BOT_TOKEN": "@bot-token",
     "CHAT_ID": "@chat-id"

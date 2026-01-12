@@ -137,7 +137,7 @@ def payload_2(session, _token):
     
     data = {
         "_token": _token,
-        "email": os.getenv("IVASMS_EMAIL"),
+        "email": os.getenv("IVAS_EMAIL"),
         "password": os.getenv("IVASMS_PASSWORD"),
         "remember": "on",
         "g-recaptcha-response": "",

@@ -15,7 +15,7 @@ import urllib.parse
 
 # Load environment variables
 load_dotenv()
-IVASMS_EMAIL = os.getenv("IVASMS_EMAIL")
+IVAS_EMAIL = os.getenv("IVAS_EMAIL")
 IVASMS_PASSWORD = os.getenv("IVASMS_PASSWORD")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -102,7 +102,7 @@ def payload_2(session, _token):
     
     data = {
         "_token": _token,
-        "email": IVASMS_EMAIL,
+        "email": IVAS_EMAIL,
         "password": IVASMS_PASSWORD,
         "remember": "on",
         "g-recaptcha-response": "",
