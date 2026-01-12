@@ -12,6 +12,8 @@ import asyncio
 import urllib.parse
 from flask import Flask
 import threading
+import random
+import cloudscraper
 
 # Set up logging
 logging.basicConfig(
@@ -54,25 +56,50 @@ def get_powered_by_caption():
     current_year = datetime.now().year
     return f"©ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝐀ᴜʀᴏʀᴀ𝐈ɪɴᴄ {current_year}"
 
-# Common headers
 BASE_HEADERS = {
     "Host": "www.ivasms.com",
     "Cache-Control": "max-age=0",
-    "Sec-Ch-Ua": '"Not)A;Brand";v="8", "Chromium";v="138"',
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
     "Upgrade-Insecure-Requests": "1",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Sec-Fetch-Site": "none",
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-User": "?1",
     "Sec-Fetch-Dest": "document",
     "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "en-GB,en;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
     "Priority": "u=0, i",
     "Connection": "keep-alive"
 }
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+]
+
+def get_random_headers():
+    """Get headers with a random user agent."""
+    headers = BASE_HEADERS.copy()
+    headers["User-Agent"] = random.choice(USER_AGENTS)
+    return headers
+
+def create_scraper_session():
+    """Create a cloudscraper session to bypass Cloudflare."""
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True,
+        },
+        delay=10
+    )
+    return scraper
 
 async def send_to_telegram(sms):
     """Send SMS details to Telegram group with banner, buttons, and powered by caption."""
@@ -110,54 +137,107 @@ async def send_to_telegram(sms):
         except Exception as e2:
             logger.error(f"Fallback text message also failed: {str(e2)}")
 
-def payload_1(session):
-    """Send GET request to /login to retrieve initial tokens."""
+def payload_1(session, max_retries=3):
+    """Send GET request to /login to retrieve initial tokens with retry logic."""
     url = "https://www.ivasms.com/login"
-    headers = BASE_HEADERS.copy()
-    try:
-        response = session.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        token_match = re.search(r'<input type="hidden" name="_token" value="([^"]+)"', response.text)
-        if not token_match:
-            raise ValueError("Could not find _token in response")
-        return {"_token": token_match.group(1)}
-    except Exception as e:
-        logger.error(f"Payload 1 failed: {str(e)}")
-        raise
+    
+    for attempt in range(max_retries):
+        try:
+            # Add random delay to mimic human behavior
+            time.sleep(random.uniform(1, 3))
+            
+            headers = get_random_headers()
+            response = session.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            token_match = re.search(r'<input type="hidden" name="_token" value="([^"]+)"', response.text)
+            if not token_match:
+                # Try alternative token pattern
+                token_match = re.search(r'name="_token"\s+value="([^"]+)"', response.text)
+            
+            if not token_match:
+                logger.warning(f"Attempt {attempt + 1}: Could not find _token, response length: {len(response.text)}")
+                if attempt < max_retries - 1:
+                    time.sleep(random.uniform(5, 10))
+                    continue
+                raise ValueError("Could not find _token in response after all retries")
+            
+            logger.info(f"Successfully retrieved login token on attempt {attempt + 1}")
+            return {"_token": token_match.group(1)}
+            
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Attempt {attempt + 1} - HTTP Error: {e}")
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(10, 30) * (attempt + 1)
+                logger.info(f"Waiting {wait_time:.1f}s before retry...")
+                time.sleep(wait_time)
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1} - Error: {str(e)}")
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(5, 15) * (attempt + 1)
+                logger.info(f"Waiting {wait_time:.1f}s before retry...")
+                time.sleep(wait_time)
+            else:
+                raise
 
-def payload_2(session, _token):
+def payload_2(session, _token, max_retries=3):
     """Send POST request to /login with credentials."""
     url = "https://www.ivasms.com/login"
-    headers = BASE_HEADERS.copy()
-    headers.update({
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Sec-Fetch-Site": "same-origin",
-        "Referer": "https://www.ivasms.com/login"
-    })
     
-    data = {
-        "_token": _token,
-        "email": os.getenv("IVASMS_EMAIL"),
-        "password": os.getenv("IVASMS_PASSWORD"),
-        "remember": "on",
-        "g-recaptcha-response": "",
-        "submit": "Login"
-    }
-    
-    try:
-        response = session.post(url, headers=headers, data=data, timeout=30)
-        response.raise_for_status()
-        if response.url.endswith("/login"):
-            raise ValueError("Login failed, redirected back to /login")
-        return response
-    except Exception as e:
-        logger.error(f"Payload 2 failed: {str(e)}")
-        raise
+    for attempt in range(max_retries):
+        try:
+            time.sleep(random.uniform(1, 2))
+            
+            headers = get_random_headers()
+            headers.update({
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Sec-Fetch-Site": "same-origin",
+                "Referer": "https://www.ivasms.com/login",
+                "Origin": "https://www.ivasms.com"
+            })
+            
+            data = {
+                "_token": _token,
+                "email": os.getenv("IVASMS_EMAIL"),
+                "password": os.getenv("IVASMS_PASSWORD"),
+                "remember": "on",
+                "g-recaptcha-response": "",
+                "submit": "Login"
+            }
+            
+            response = session.post(url, headers=headers, data=data, timeout=30, allow_redirects=True)
+            response.raise_for_status()
+            
+            # Check if login was successful
+            if "/login" in response.url and "portal" not in response.url:
+                # Check for error messages in response
+                if "Invalid credentials" in response.text or "incorrect" in response.text.lower():
+                    raise ValueError("Invalid email or password")
+                if attempt < max_retries - 1:
+                    logger.warning(f"Attempt {attempt + 1}: Login redirect back to /login, retrying...")
+                    time.sleep(random.uniform(5, 10))
+                    continue
+                raise ValueError("Login failed, redirected back to /login")
+            
+            logger.info(f"Successfully logged in on attempt {attempt + 1}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1} - Payload 2 failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(5, 15))
+            else:
+                raise
 
 def payload_3(session):
     """Send GET request to /sms/received to get statistics page."""
     url = "https://www.ivasms.com/portal/sms/received"
-    headers = BASE_HEADERS.copy()
+    
+    time.sleep(random.uniform(0.5, 1.5))
+    
+    headers = get_random_headers()
     headers.update({
         "Sec-Fetch-Site": "same-origin",
         "Referer": "https://www.ivasms.com/portal"
@@ -178,7 +258,10 @@ def payload_3(session):
 def payload_4(session, csrf_token, from_date, to_date):
     """Send POST request to /sms/received/getsms to fetch SMS statistics."""
     url = "https://www.ivasms.com/portal/sms/received/getsms"
-    headers = BASE_HEADERS.copy()
+    
+    time.sleep(random.uniform(0.3, 1))
+    
+    headers = get_random_headers()
     headers.update({
         "Content-Type": "multipart/form-data; boundary=----WebKitFormBoundaryhkp0qMozYkZV6Ham",
         "X-Requested-With": "XMLHttpRequest",
@@ -288,7 +371,10 @@ def load_from_json(filename="sms_statistics.json"):
 def payload_5(session, csrf_token, to_date, range_name):
     """Send POST request to /sms/received/getsms/number to get numbers for a range."""
     url = "https://www.ivasms.com/portal/sms/received/getsms/number"
-    headers = BASE_HEADERS.copy()
+    
+    time.sleep(random.uniform(0.3, 0.8))
+    
+    headers = get_random_headers()
     headers.update({
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
@@ -337,7 +423,10 @@ def parse_numbers(response_text):
 def payload_6(session, csrf_token, to_date, number, range_name):
     """Send POST request to /sms/received/getsms/number/sms to get message details."""
     url = "https://www.ivasms.com/portal/sms/received/getsms/number/sms"
-    headers = BASE_HEADERS.copy()
+    
+    time.sleep(random.uniform(0.2, 0.5))
+    
+    headers = get_random_headers()
     headers.update({
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
@@ -425,147 +514,161 @@ async def main():
         # Track last re-authentication time to prevent rapid loops
         last_reauth_time = 0
         min_reauth_interval = 60  # Minimum seconds between re-authentication attempts
+        consecutive_failures = 0
+        max_consecutive_failures = 5
         
         while True:
             try:
-                with requests.Session() as session:
-                    # Initialize session start time
-                    session_start = time.time()
+                session = create_scraper_session()
+                logger.info("Created new cloudscraper session to bypass protection")
+                
+                # Initialize session start time
+                session_start = time.time()
+                
+                # Step 1: Login with retry logic
+                logger.info("Executing Payload 1: GET /login")
+                tokens = payload_1(session)
+                
+                logger.info("Executing Payload 2: POST /login")
+                response = payload_2(session, tokens["_token"])
+                logger.info(f"Login successful! Redirected to: {response.url}")
+                
+                # Reset failure counter on successful login
+                consecutive_failures = 0
+                
+                logger.info("Executing Payload 3: GET /sms/received")
+                response, csrf_token = payload_3(session)
+                logger.debug(f"Payload 3 response status: {response.status_code}")
+                
+                # Step 2: Fetch initial statistics
+                logger.info(f"Executing Payload 4: POST /sms/received/getsms for date range {from_date} to {to_date}")
+                response = payload_4(session, csrf_token, from_date, to_date)
+                logger.debug(f"Payload 4 response status: {response.status_code}")
+                ranges = parse_statistics(response.text)
+                
+                # Save initial statistics if empty
+                if not existing_ranges:
+                    existing_ranges = ranges
+                    existing_ranges_dict = {r["range_name"]: r for r in ranges}
+                    save_to_json(existing_ranges, JSON_FILE)
+                
+                # Step 3: Continuous monitoring
+                while True:
+                    # Check session validity before expiry check
+                    try:
+                        test_response = session.get("https://www.ivasms.com/portal", headers=get_random_headers(), timeout=10)
+                        if test_response.status_code == 401 or test_response.url.endswith("/login"):
+                            logger.info("Session invalid. Re-authenticating...")
+                            last_reauth_time = time.time()
+                            break
+                    except Exception as e:
+                        logger.warning(f"Session validation check failed: {str(e)}")
+                        last_reauth_time = time.time()
+                        break
                     
-                    # Step 1: Login
-                    logger.info("Executing Payload 1: GET /login")
-                    tokens = payload_1(session)
+                    # Check for session expiry (2 hours)
+                    elapsed_time = time.time() - session_start
+                    logger.debug(f"Session elapsed time: {elapsed_time:.2f} seconds")
+                    if elapsed_time > 7200:
+                        logger.info("Session nearing expiry. Re-authenticating...")
+                        # Ensure minimum interval between re-authentications
+                        time_since_last_reauth = time.time() - last_reauth_time
+                        if time_since_last_reauth < min_reauth_interval:
+                            logger.info(f"Waiting {min_reauth_interval - time_since_last_reauth:.2f} seconds before re-authenticating")
+                            await asyncio.sleep(min_reauth_interval - time_since_last_reauth)
+                        last_reauth_time = time.time()
+                        break
                     
-                    logger.info("Executing Payload 2: POST /login")
-                    response = payload_2(session, tokens["_token"])
-                    logger.debug(f"Payload 2 response status: {response.status_code}, URL: {response.url}")
-                    
-                    logger.info("Executing Payload 3: GET /sms/received")
-                    response, csrf_token = payload_3(session)
-                    logger.debug(f"Payload 3 response status: {response.status_code}")
-                    
-                    # Step 2: Fetch initial statistics
-                    logger.info(f"Executing Payload 4: POST /sms/received/getsms for date range {from_date} to {to_date}")
+                    # Fetch updated statistics
                     response = payload_4(session, csrf_token, from_date, to_date)
                     logger.debug(f"Payload 4 response status: {response.status_code}")
-                    ranges = parse_statistics(response.text)
+                    new_ranges = parse_statistics(response.text)
+                    new_ranges_dict = {r["range_name"]: r for r in new_ranges}
                     
-                    # Save initial statistics if empty
-                    if not existing_ranges:
-                        existing_ranges = ranges
-                        existing_ranges_dict = {r["range_name"]: r for r in ranges}
-                        save_to_json(existing_ranges, JSON_FILE)
+                    # Compare with existing ranges
+                    for range_data in new_ranges:
+                        range_name = range_data["range_name"]
+                        current_count = range_data["count"]
+                        existing_range = existing_ranges_dict.get(range_name)
+                        
+                        if not existing_range:
+                            logger.info(f"New range detected: {range_name}")
+                            response = payload_5(session, csrf_token, to_date, range_name)
+                            logger.debug(f"Payload 5 response status: {response.status_code}")
+                            numbers = parse_numbers(response.text)
+                            if numbers:
+                                for number_data in numbers[::-1]:
+                                    logger.info(f"Fetching message for number: {number_data['number']}")
+                                    response = payload_6(session, csrf_token, to_date, number_data["number"], range_name)
+                                    logger.debug(f"Payload 6 response status vp6: {response.status_code}")
+                                    message_data = parse_message(response.text)
+                                    
+                                    sms = {
+                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "number": number_data["number"],
+                                        "message": message_data["message"],
+                                        "range": range_name,
+                                        "revenue": message_data["revenue"]
+                                    }
+                                    logger.info(f"New SMS: {sms}")
+                                    await send_to_telegram(sms)
+                                
+                                existing_ranges.append(range_data)
+                                existing_ranges_dict[range_name] = range_data
+                        
+                        elif current_count > existing_range["count"]:
+                            count_diff = current_count - existing_range["count"]
+                            logger.info(f"Count increased for {range_name}: {existing_range['count']} -> {current_count} (+{count_diff})")
+                            response = payload_5(session, csrf_token, to_date, range_name)
+                            logger.debug(f"Payload 5 response status: {response.status_code}")
+                            numbers = parse_numbers(response.text)
+                            if numbers:
+                                for number_data in numbers[-count_diff:][::-1]:
+                                    logger.info(f"Fetching message for number: {number_data['number']}")
+                                    response = payload_6(session, csrf_token, to_date, number_data["number"], range_name)
+                                    logger.debug(f"Payload 6 response status vp6: {response.status_code}")
+                                    message_data = parse_message(response.text)
+                                    
+                                    sms = {
+                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "number": number_data["number"],
+                                        "message": message_data["message"],
+                                        "range": range_name,
+                                        "revenue": message_data["revenue"]
+                                    }
+                                    logger.info(f"New SMS: {sms}")
+                                    await send_to_telegram(sms)
+                                
+                                for r in existing_ranges:
+                                    if r["range_name"] == range_name:
+                                        r["count"] = current_count
+                                        r["paid"] = range_data["paid"]
+                                        r["unpaid"] = range_data["unpaid"]
+                                        r["revenue"] = range_data["revenue"]
+                                        break
+                                existing_ranges_dict[range_name] = range_data
                     
-                    # Step 3: Continuous monitoring
-                    while True:
-                        # Check session validity before expiry check
-                        try:
-                            test_response = session.get("https://www.ivasms.com/portal", headers=BASE_HEADERS, timeout=10)
-                            if test_response.status_code == 401 or test_response.url.endswith("/login"):
-                                logger.info("Session invalid. Re-authenticating...")
-                                last_reauth_time = time.time()
-                                break
-                        except Exception as e:
-                            logger.warning(f"Session validation check failed: {str(e)}")
-                            last_reauth_time = time.time()
-                            break
-                        
-                        # Check for session expiry (2 hours)
-                        elapsed_time = time.time() - session_start
-                        logger.debug(f"Session elapsed time: {elapsed_time:.2f} seconds")
-                        if elapsed_time > 7200:
-                            logger.info("Session nearing expiry. Re-authenticating...")
-                            # Ensure minimum interval between re-authentications
-                            time_since_last_reauth = time.time() - last_reauth_time
-                            if time_since_last_reauth < min_reauth_interval:
-                                logger.info(f"Waiting {min_reauth_interval - time_since_last_reauth:.2f} seconds before re-authenticating")
-                                await asyncio.sleep(min_reauth_interval - time_since_last_reauth)
-                            last_reauth_time = time.time()
-                            break
-                        
-                        # Fetch updated statistics
-                        response = payload_4(session, csrf_token, from_date, to_date)
-                        logger.debug(f"Payload 4 response status: {response.status_code}")
-                        new_ranges = parse_statistics(response.text)
-                        new_ranges_dict = {r["range_name"]: r for r in new_ranges}
-                        
-                        # Compare with existing ranges
-                        for range_data in new_ranges:
-                            range_name = range_data["range_name"]
-                            current_count = range_data["count"]
-                            existing_range = existing_ranges_dict.get(range_name)
-                            
-                            if not existing_range:
-                                logger.info(f"New range detected: {range_name}")
-                                response = payload_5(session, csrf_token, to_date, range_name)
-                                logger.debug(f"Payload 5 response status: {response.status_code}")
-                                numbers = parse_numbers(response.text)
-                                if numbers:
-                                    for number_data in numbers[::-1]:
-                                        logger.info(f"Fetching message for number: {number_data['number']}")
-                                        response = payload_6(session, csrf_token, to_date, number_data["number"], range_name)
-                                        logger.debug(f"Payload 6 response status vp6: {response.status_code}")
-                                        message_data = parse_message(response.text)
-                                        
-                                        sms = {
-                                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "number": number_data["number"],
-                                            "message": message_data["message"],
-                                            "range": range_name,
-                                            "revenue": message_data["revenue"]
-                                        }
-                                        logger.info(f"New SMS: {sms}")
-                                        await send_to_telegram(sms)
-                                    
-                                    existing_ranges.append(range_data)
-                                    existing_ranges_dict[range_name] = range_data
-                            
-                            elif current_count > existing_range["count"]:
-                                count_diff = current_count - existing_range["count"]
-                                logger.info(f"Count increased for {range_name}: {existing_range['count']} -> {current_count} (+{count_diff})")
-                                response = payload_5(session, csrf_token, to_date, range_name)
-                                logger.debug(f"Payload 5 response status: {response.status_code}")
-                                numbers = parse_numbers(response.text)
-                                if numbers:
-                                    for number_data in numbers[-count_diff:][::-1]:
-                                        logger.info(f"Fetching message for number: {number_data['number']}")
-                                        response = payload_6(session, csrf_token, to_date, number_data["number"], range_name)
-                                        logger.debug(f"Payload 6 response status vp6: {response.status_code}")
-                                        message_data = parse_message(response.text)
-                                        
-                                        sms = {
-                                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "number": number_data["number"],
-                                            "message": message_data["message"],
-                                            "range": range_name,
-                                            "revenue": message_data["revenue"]
-                                        }
-                                        logger.info(f"New SMS: {sms}")
-                                        await send_to_telegram(sms)
-                                    
-                                    for r in existing_ranges:
-                                        if r["range_name"] == range_name:
-                                            r["count"] = current_count
-                                            r["paid"] = range_data["paid"]
-                                            r["unpaid"] = range_data["unpaid"]
-                                            r["revenue"] = range_data["revenue"]
-                                            break
-                                    existing_ranges_dict[range_name] = range_data
-                        
-                        # Update existing ranges
-                        existing_ranges = new_ranges
-                        existing_ranges_dict = new_ranges_dict
-                        save_to_json(existing_ranges, JSON_FILE)
-                        
-                        # Wait 2-3 seconds
-                        await asyncio.sleep(2 + (time.time() % 1))
+                    # Update existing ranges
+                    existing_ranges = new_ranges
+                    existing_ranges_dict = new_ranges_dict
+                    save_to_json(existing_ranges, JSON_FILE)
+                    
+                    # Wait 2-3 seconds with some randomness
+                    await asyncio.sleep(2 + random.random())
                     
             except Exception as e:
-                logger.error(f"Error in main loop: {str(e)}. Response content: {getattr(e, 'response', 'No response')}")
-                # Implement exponential backoff
-                retry_delay = min(30 * 2 ** min(3, 1), 300)  # Cap at 300 seconds
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                await asyncio.sleep(retry_delay)
+                consecutive_failures += 1
+                logger.error(f"Error in main loop (failure {consecutive_failures}/{max_consecutive_failures}): {str(e)}")
+                
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error("Too many consecutive failures. Waiting longer before retry...")
+                    await asyncio.sleep(300)  # Wait 5 minutes
+                    consecutive_failures = 0
+                else:
+                    # Exponential backoff with jitter
+                    retry_delay = min(30 * (2 ** consecutive_failures) + random.uniform(0, 30), 300)
+                    logger.info(f"Retrying in {retry_delay:.1f} seconds...")
+                    await asyncio.sleep(retry_delay)
     
     except Exception as e:
         logger.error(f"Main loop failed: {str(e)}")
