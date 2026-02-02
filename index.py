@@ -36,7 +36,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ADMIN_IDS = [7500869913, 6524840104]
+ADMIN_IDS = [7562165596]
 bot_users = set()
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -71,7 +71,7 @@ def get_inline_keyboard():
     keyboard = [
         [InlineKeyboardButton("𝐍ᴜᴍʙᴇʀ 𝐂ʜᴀɴɴᴇʟ", url="https://t.me/mrafrixtech")],
         [InlineKeyboardButton("𝐎ᴛᴘ 𝐆𝐫𝐨𝐮𝐩", url="https://t.me/afrixotpgc")],
-        [InlineKeyboardButton("𝐑ᴇɴᴛ sᴄʀɪᴘᴛ", url="https://t.me/jaden_afrix")],
+        [InlineKeyboardButton("𝐑ᴇɴᴛ sᴄʀɪᴘᴛ", url="https://t.me/KnKudo")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
