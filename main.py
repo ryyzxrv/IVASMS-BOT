@@ -22,7 +22,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 # Common headers
 BASE_HEADERS = {
-    "Host": "www.ivasms.com",
+    "Host": "https://ivas.tempnum.qzz.io",
     "Cache-Control": "max-age=0",
     "Sec-Ch-Ua": '"Not)A;Brand";v="8", "Chromium";v="138"',
     "Sec-Ch-Ua-Mobile": "?0",
